@@ -1,0 +1,64 @@
+(defgate main
+    (lambda (form)
+      (append (list (list '.global '_start) '_start)
+              (compile-forms form))))
+
+(defgate syscall
+    (lambda (form) (list (list 'mov 'x8 (car form))
+                    (list 'svc 0))))
+
+(defgate write-stdout
+    (lambda (form) (append `((mov x0 1)
+                        (ldr x1 ,(car form))
+                        (mov x2 ,(length (car form))))
+                      (apply-gate '(syscall 64)))))
+
+(defgate exit
+    (lambda (form) (append `((mov x0 ,(car form)))
+                      (apply-gate '(syscall 93)))))
+
+(defgate set
+    (lambda (form)
+      (let ((target (first form))
+            (value (second form)))
+        (cond
+          ((symbolp form) `((mov ,target ,value)))
+          ((integerp form)
+           `((mov ,target ,(logand value #xff))
+             ,(when (> form #xff)
+                `(movk ,target ,(logand value #xff00)))
+             ,(when (> form #xffff)
+                `(movk ,target ,(logand value #xff0000)))
+             ,(when (> form #xffffff)
+                `(movk ,target ,(logand value #xff000000)))
+             ,(when (> form #xffffffff)
+                (error "integer is too big to fit in 64 bit"))))
+          (t (error "must be either a symbol or an integer"))))))
+
+(defgate label
+    (lambda (form)
+      (list (car form))))
+
+(defgate goto
+    (lambda (form)
+      `((b ,(car form)))))
+
+(defgate for
+    (lambda (form)
+      (let ((expr (first form))
+            (body (rest form)))
+        (let ((reg (first expr))
+              (start (second expr))
+              (end (third expr))
+              (loop-label (gensym)))
+          `(,@(apply-gate `(mov ,reg ,start))
+            ,loop-label
+            ,@(compile-forms body)
+            (add ,reg ,reg 1)
+            (cmp ,reg ,end)
+            (b.le ,loop-label))))))
+
+(main
+ (write-stdout "Hello, world!\n")
+ (write-stdout "bo!\n")
+ (exit 0))
